@@ -1,1 +1,2 @@
-chat_id,is_owner,is_debug,state,trivia_points,trivia_state
+chat_id,is_admin,is_debug,state,test_points,test_state
+226549738,0,0,0,0,0

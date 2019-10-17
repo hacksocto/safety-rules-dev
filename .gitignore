@@ -1,2 +1,9 @@
+# python virtual environment
+/venv
+
+
+# VS code configs
+*.code-workspace
+
 # python 
 __pycache__/
