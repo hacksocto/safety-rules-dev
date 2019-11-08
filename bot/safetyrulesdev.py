@@ -1,58 +1,76 @@
 # Для построения путей относительно файла
 from os.path import dirname as dn, abspath as ap
 import csv  # Для работы с csv файлами
+import sqlite3
+
+
+def db_select(request):
+    db_path = dn(dn(ap(__file__))) + '/data/db'
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    return cursor.execute(request).fetchall()
+
+
+def db_update(request):
+    db_path = dn(dn(ap(__file__))) + '/data/db'
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute(request)
+    conn.commit()
+    return
 
 
 def records_read(chat_id):
+    # TODO fix comments
     """Чтение данных из файла с пользователями, поиск пользователя по
         чату, либо, если его не существует - создание нового.
         Важно! Если в файле customers нет ни одной записи, набор полей не
         считается и запись в файл не произойдет и удалит существующие данные"""
-    # Поиск пути относительно файла
-    path = dn(dn(ap(__file__))) + '/db/customers.csv'
-    fieldnames = []  # Набор полей для записи в файл
-    records = []  # Копия данных для записи в файл
     # Словарь, описывающий нового пользователя
-    customer = {'chat_id': chat_id,
-                'is_admin': 0, 'is_debug': 0, 'state': 0,
-                'test_points': 0, 'test_state': 0}
+    customer = {'chat_id': chat_id, 'is_admin': 0, 'is_debug': 0,
+                'state': 0, 'test_points': 0, 'test_state': 0}
 
-    with open(path, encoding='utf-8') as customers:
-        reader = csv.DictReader(customers, delimiter=',')
-        # Проход по пользователям
-        for record in reader:
-            records.append(record)
-            # Забирает пользователя, если он существует
-            if customer.get('chat_id') == int(record.get('chat_id')):
-                customer.update(record)
-            fieldnames = reader.fieldnames
+    request = """SELECT is_admin, is_debug, state, test_points, test_state
+                 FROM customers
+                 WHERE chat_id={}""".format(str(chat_id))
 
-    return customer, records, fieldnames
+    try:
+        response = db_select(request)[0]
+        customer.update({'is_admin': response[0], 'is_debug': response[1],
+                         'state': response[2], 'test_points': response[3],
+                         'test_state': response[4]})
+    except IndexError:
+        request = """INSERT INTO customers
+                     VALUES ({}, 0, 0, 0, 0, 0)""".format(chat_id)
+        db_update(request)
+    return customer
 
 
-def send_debug_to_admins(records, event, bot):
+def send_debug_to_admins(event, bot):
     """Проверяет флаги 'is_admin', 'is_debug' и отправляет
         тело входящего запроса, если оба флага 1"""
-    for record in records:
-        if int(record.get('is_admin')) == 1 and \
-           int(record.get('is_debug')) == 1:
-            msg = 'Body is \n' + str(event)
-            bot.send_message_text(record.get('chat_id'), msg)
+    msg = 'Body is \n' + str(event)
+    request = """SELECT chat_id
+                 FROM customers
+                 WHERE is_admin = 1 AND is_debug = 1"""
+    response = db_select(request)
+
+    for owner in response:
+        bot.send_message_text(owner[0], msg)
     return
 
 
-def records_update(customer, records, fieldnames):
-    """Запись данных обработанного пользователя в файл"""
-    path = dn(dn(ap(__file__))) + '/db/customers.csv'
-    with open(path, 'w', encoding='utf-8', newline='') as output:
-        writer = csv.DictWriter(output, fieldnames=fieldnames)
-        writer.writeheader()  # Записывает заголовки из fieldnames
-        # Построчная запись
-        for record in records:
-            # Обновляет данные обработанного пользователя
-            if record.get('chat_id') == customer.get('chat_id'):
-                record.update(customer)
-            writer.writerow(record)
+def records_update(customer):
+    request = """UPDATE customers
+                 SET is_admin={}, is_debug={}, state={},
+                 test_points={}, test_state={}
+                 WHERE chat_id={}""".format(customer.get('is_admin'),
+                                            customer.get('is_debug'),
+                                            customer.get('state'),
+                                            customer.get('test_points'),
+                                            customer.get('test_state'),
+                                            customer.get('chat_id'))
+    db_update(request)
     return
 
 
@@ -62,7 +80,7 @@ def test_ask_question(state, chat_id, bot):
     # проверка ответа по предыдущему состоянию
     state += 1
     # Поиск пути относительно файла
-    path = dn(dn(ap(__file__))) + '/db/test_questions.csv'
+    path = dn(dn(ap(__file__))) + '/data/test_questions.csv'
     with open(path, encoding='utf-8-sig') as test:
         reader = csv.DictReader(test, delimiter=',')
         # Поиск по вопросам
@@ -117,7 +135,7 @@ def test_ending(customer, state, points, text, chat_id, bot):
         return customer
 
     # Увеличение счета
-    points += test_check_answer(state, points, chat_id, bot)
+    points += test_check_answer(state, answer, chat_id, bot)
     msg = 'Вы набрали ' + str(points) + ' очков. ' \
           'Нажмите на /test, чтобы начать заново'
     key_text = '''{"keyboard":[[{"text":"/test"}]],
@@ -132,7 +150,7 @@ def test_ending(customer, state, points, text, chat_id, bot):
 def test_check_answer(state, answer, chat_id, bot):
     """Проверка ответа на вопрос и отправка результата"""
     # Построение пути до файла
-    path = dn(dn(ap(__file__))) + '/db/test_questions.csv'
+    path = dn(dn(ap(__file__))) + '/data/test_questions.csv'
     with open(path, encoding='utf-8-sig') as test:
         reader = csv.DictReader(test, delimiter=',')
         # Поиск по вопросам
@@ -150,11 +168,11 @@ def handle(bot, event):
     """Обработка входящего сообщения"""
     chat_id = event['message']['chat']['id']
     text = event['message']['text']
-    customer, records, fieldnames = records_read(chat_id)
-    test_state = int(customer.get('test_state'))
-    test_points = int(customer.get('test_points'))
+    customer = records_read(chat_id)
+    test_state = customer.get('test_state')
+    test_points = customer.get('test_points')
 
-    send_debug_to_admins(records, event, bot)
+    send_debug_to_admins(event, bot)
 
     if text[0] == '/':
 
@@ -167,11 +185,21 @@ def handle(bot, event):
             # Запись изменений о пользователе
             customer.update({'test_state': 0,
                              'test_points': 0})
-            records_update(customer, records, fieldnames)
+            records_update(customer)
             key_text = '''{"keyboard":[[{"text":"/test"}]],
                           "resize_keyboard":true}'''
             msg = 'Нажмите на кнопку, чтобы начать тест'
             bot.send_custom_keyboard(chat_id, msg, key_text)
+            return
+
+        """Параметр start"""
+        if len(divided_text) == 2 and \
+           divided_text[0] == '/start':
+            bot.send_message_text(chat_id, 'ECHO: ' + divided_text[1])
+            # Запись изменений о пользователе
+            customer.update({'test_state': 0,
+                             'test_points': 0})
+            records_update(customer)
             return
 
         """Запись пользователя в администраторы"""
@@ -184,7 +212,7 @@ def handle(bot, event):
             bot.send_message_text(chat_id, 'Администратор опознан')
             # Запись изменений о пользователе
             customer.update({'is_admin': 1})
-            records_update(customer, records, fieldnames)
+            records_update(customer)
             return
 
         """Включение режима отладки"""
@@ -195,7 +223,7 @@ def handle(bot, event):
             bot.send_message_text(chat_id, 'Debug mode ON')
             # Запись изменений о пользователе
             customer.update({'is_debug': 1})
-            records_update(customer, records, fieldnames)
+            records_update(customer)
             return
 
         """Выключение режима отладки"""
@@ -206,7 +234,7 @@ def handle(bot, event):
             bot.send_message_text(chat_id, 'Debug mode OFF')
             # Запись изменений о пользователе
             customer.update({'is_debug': 0})
-            records_update(customer, records, fieldnames)
+            records_update(customer)
             return
 
         """Запуск теста"""
@@ -218,7 +246,7 @@ def handle(bot, event):
             # Запись изменений о пользователе
             customer.update({'test_state': test_state,
                              'test_points': 0})
-            records_update(customer, records, fieldnames)
+            records_update(customer)
             return
 
         """Если ни одно ветвление не сработало"""
@@ -230,7 +258,7 @@ def handle(bot, event):
     if test_state == 10:
         customer = test_ending(customer, test_state, test_points,
                                text, chat_id, bot)
-        records_update(customer, records, fieldnames)
+        records_update(customer)
         return
 
     """Продолжение теста"""
@@ -238,7 +266,7 @@ def handle(bot, event):
 
         customer = test_continuation(customer, test_state, test_points,
                                      text, chat_id, bot)
-        records_update(customer, records, fieldnames)
+        records_update(customer)
         return
 
     """Если ни одна из ветвей не сработала"""
