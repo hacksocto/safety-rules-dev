@@ -5,7 +5,7 @@ import configparser
 # Для работы с HTTP запросами
 import requests
 
-from . import safetyrulesdev
+from . import bepresent
 
 
 class TelegramBot:
@@ -30,9 +30,9 @@ class TelegramBot:
         """Вызов обработчиков ботов. Выбранный обработчик зависит от имени.
             Если в ходе обработки возникает ошибка - хозяину отправляется
             сообщение об ошибке"""
-        if self.name == 'safetyrulesdev':
+        if self.name == 'bepresent':
             try:
-                safetyrulesdev.handle(self, event)
+                bepresent.handle(self, event)
             except Exception:
                 self.send_message_text(self.owner_chat_id, 'ERROR')
                 print('err')

@@ -24,14 +24,14 @@ def records_read(chat_id):
     # TODO fix comments
     """Чтение данных из файла с пользователями, поиск пользователя по
         чату, либо, если его не существует - создание нового.
-        Важно! Если в файле customers нет ни одной записи, набор полей не
+        Важно! Если в файле customer нет ни одной записи, набор полей не
         считается и запись в файл не произойдет и удалит существующие данные"""
     # Словарь, описывающий нового пользователя
     customer = {'chat_id': chat_id, 'is_admin': 0, 'is_debug': 0,
-                'state': 0, 'test_points': 0, 'test_state': 0}
+                'state': '0', 'test_points': 0, 'test_state': 0}
 
     request = """SELECT is_admin, is_debug, state, test_points, test_state
-                 FROM customers
+                 FROM customer
                  WHERE chat_id={}""".format(str(chat_id))
 
     try:
@@ -40,8 +40,8 @@ def records_read(chat_id):
                          'state': response[2], 'test_points': response[3],
                          'test_state': response[4]})
     except IndexError:
-        request = """INSERT INTO customers
-                     VALUES ({}, 0, 0, 0, 0, 0)""".format(chat_id)
+        request = """INSERT INTO customer
+                     VALUES ({}, 0, 0, '0', 0, 0)""".format(chat_id)
         db_update(request)
     return customer
 
@@ -51,7 +51,7 @@ def send_debug_to_admins(event, bot):
         тело входящего запроса, если оба флага 1"""
     msg = 'Body is \n' + str(event)
     request = """SELECT chat_id
-                 FROM customers
+                 FROM customer
                  WHERE is_admin = 1 AND is_debug = 1"""
     response = db_select(request)
 
@@ -61,7 +61,7 @@ def send_debug_to_admins(event, bot):
 
 
 def records_update(customer):
-    request = """UPDATE customers
+    request = """UPDATE customer
                  SET is_admin={}, is_debug={}, state={},
                  test_points={}, test_state={}
                  WHERE chat_id={}""".format(customer.get('is_admin'),
@@ -164,6 +164,58 @@ def test_check_answer(state, answer, chat_id, bot):
                     return 0
 
 
+def script_trigger(customer, chat_id, bot):
+    state = customer.get('state')
+    shift = len(state)
+
+    request = """SELECT ID, option
+                 FROM script
+                 WHERE ID LIKE '{}_'"""
+    request = request.format(state)
+    response = db_select(request)
+
+    length = len(response)
+    if length == 0:
+        return False
+    if length == 1:
+        msg = response[0][0]
+        bot.send_message_text(chat_id, msg)
+
+        msg = 'Введите /script, чтобы начать заново'
+        key_text = '''{"keyboard":[[{"text":"/script"}]],
+                      "resize_keyboard":true}'''
+        bot.send_custom_keyboard(chat_id, msg, key_text)
+        return True
+
+    key_text = button_constructor(length)
+    msg = ''
+    for option in response:
+        msg = msg + '{}. {}\n\n'.format(option[0][shift:], option[1])
+    bot.send_custom_keyboard(chat_id, msg, key_text)
+    return True
+
+
+def button_constructor(length):
+    """Создание кастомной клавиатуры (хак)"""
+    # TODO нужно ли большее количество?
+    dimensions = [[1, 1], [2, 1], [3, 1], [4, 1], [5, 1],
+                  [3, 2], [4, 2], [4, 2], [3, 3], [5, 2]]
+    rowsAmount = dimensions[length - 1][0]
+    colsAmount = dimensions[length - 1][1]
+    current = 1
+    json = '{"keyboard":[['
+
+    for row in range(colsAmount):
+        for col in range(rowsAmount):
+            json = json + '{"text": "' + str(current) + '"}, '
+            current = current + 1
+        if length == 7:
+            rowsAmount = rowsAmount - 1
+        json = json[:-2] + '], ['
+    json = json[:-3] + '], "resize_keyboard":true}'
+    return json
+
+
 def handle(bot, event):
     """Обработка входящего сообщения"""
     chat_id = event['message']['chat']['id']
@@ -249,6 +301,27 @@ def handle(bot, event):
             records_update(customer)
             return
 
+        if len(divided_text) == 1 and \
+           divided_text[0] == '/script':
+            msg = 'Выберите раздел. Для отмены отправьте /stop'
+            bot.send_message_text(chat_id, msg)
+
+            customer.update({'state': ''})
+            script_trigger(customer, chat_id, bot)
+            records_update(customer)
+            return
+
+        if len(divided_text) == 1 and \
+           divided_text[0] == '/stop' and \
+           customer.get('state') != '0':
+            msg = """Сценарий сброшен. Для того, чтобы
+                     начать заново, отправьте /script"""
+            bot.send_message_text(chat_id, msg)
+
+            customer.update({'state': '0'})
+            records_update(customer)
+            return
+
         """Если ни одно ветвление не сработало"""
         msg = 'Неизвестная команда. Повторите, пожалуйста'
         bot.send_message_text(chat_id, msg)
@@ -267,6 +340,28 @@ def handle(bot, event):
         customer = test_continuation(customer, test_state, test_points,
                                      text, chat_id, bot)
         records_update(customer)
+        return
+
+# TODO CHECK
+    if customer.get('state') != '0':
+        state = customer.get('state')
+        if len(state) % 2 == 0
+        new_state = state + text
+        customer.update({'state': new_state})
+
+        if len(state) >= 2 and len(state) % 2 == 0:
+            new_state = new_state + '1'
+            customer.update({'state': new_state})
+            script_trigger(customer, chat_id, bot)
+            return
+
+        if script_trigger(customer, chat_id, bot):
+            records_update(customer)
+            return
+
+        msg = """Такого варианта нет. Попробуйте ввести другой
+                 ответ или начните заново, введя /script"""
+        bot.send_message_text(chat_id, msg)
         return
 
     """Если ни одна из ветвей не сработала"""
