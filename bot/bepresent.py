@@ -28,7 +28,6 @@ def records_read(chat_id):
     request = """SELECT is_admin, is_debug, state, points, test_points, test_state
                  FROM customer
                  WHERE chat_id={}""".format(chat_id)
-
     try:
         response = db_select(request)[0]
         customer.update({'is_admin': response[0], 'is_debug': response[1],
@@ -58,7 +57,7 @@ def send_debug_to_admins(event, bot):
 
 def records_update(customer):
     request = """UPDATE customer
-                 SET is_admin={}, is_debug={}, state={},
+                 SET is_admin={}, is_debug={}, state='{}',
                  points={}, test_points={}, test_state={}
                  WHERE chat_id={}""".format(customer.get('is_admin'),
                                             customer.get('is_debug'),
@@ -179,6 +178,7 @@ def script_trigger(customer, chat_id, text, bot):
         customer.update({'state': state})
 
     single = True
+    repeat = False
     while single:
         request = """SELECT *
                      FROM script
@@ -190,7 +190,9 @@ def script_trigger(customer, chat_id, text, bot):
 
         points += node.get('points')
         msg = node.get('option')
-        bot.send_message_text(chat_id, msg)
+        if repeat:
+            bot.send_message_text(chat_id, msg)
+        repeat = True
 
         if node.get('type') != 'other':
             if node.get('type') == 'bad':
@@ -264,7 +266,6 @@ def handle(bot, event):
     test_points = customer.get('test_points')
 
     send_debug_to_admins(event, bot)
-
     if text[0] == '/':
 
         # Разбивает команду по пробелам
