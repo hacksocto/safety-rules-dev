@@ -17,31 +17,27 @@ def db_update(request):
     cursor = conn.cursor()
     cursor.execute(request)
     conn.commit()
+    conn.close()
     return
 
 
 def records_read(chat_id):
-    # TODO fix comments
-    """Чтение данных из файла с пользователями, поиск пользователя по
-        чату, либо, если его не существует - создание нового.
-        Важно! Если в файле customer нет ни одной записи, набор полей не
-        считается и запись в файл не произойдет и удалит существующие данные"""
-    # Словарь, описывающий нового пользователя
     customer = {'chat_id': chat_id, 'is_admin': 0, 'is_debug': 0,
-                'state': '0', 'test_points': 0, 'test_state': 0}
+                'state': '', 'points': 0, 'test_points': 0, 'test_state': 0}
 
-    request = """SELECT is_admin, is_debug, state, test_points, test_state
+    request = """SELECT is_admin, is_debug, state, points, test_points, test_state
                  FROM customer
-                 WHERE chat_id={}""".format(str(chat_id))
+                 WHERE chat_id={}""".format(chat_id)
 
     try:
         response = db_select(request)[0]
         customer.update({'is_admin': response[0], 'is_debug': response[1],
-                         'state': response[2], 'test_points': response[3],
-                         'test_state': response[4]})
+                         'state': response[2], 'points': response[3],
+                         'test_points': response[4],
+                         'test_state': response[5]})
     except IndexError:
         request = """INSERT INTO customer
-                     VALUES ({}, 0, 0, '0', 0, 0)""".format(chat_id)
+                     VALUES ({}, 0, 0, '', 0, 0, 0)""".format(chat_id)
         db_update(request)
     return customer
 
@@ -63,10 +59,11 @@ def send_debug_to_admins(event, bot):
 def records_update(customer):
     request = """UPDATE customer
                  SET is_admin={}, is_debug={}, state={},
-                 test_points={}, test_state={}
+                 points={}, test_points={}, test_state={}
                  WHERE chat_id={}""".format(customer.get('is_admin'),
                                             customer.get('is_debug'),
                                             customer.get('state'),
+                                            customer.get('points'),
                                             customer.get('test_points'),
                                             customer.get('test_state'),
                                             customer.get('chat_id'))
@@ -164,35 +161,77 @@ def test_check_answer(state, answer, chat_id, bot):
                     return 0
 
 
-def script_trigger(customer, chat_id, bot):
+def script_trigger(customer, chat_id, text, bot):
     state = customer.get('state')
-    shift = len(state)
+    points = customer.get('points')
+    if state != '0':
+        request = """SELECT links
+                    FROM script
+                    WHERE ID='{}'""".format(state)
+        response = db_select(request)[0]
+        links = response[0].split(' ')
+        try:
+            state = links[int(text) - 1]
+        except Exception:
+            msg = 'Такого ответа нет. Попробуйте ввести другое вариант'
+            bot.send_message_text(chat_id, msg)
+            return customer
+        customer.update({'state': state})
 
-    request = """SELECT ID, option
-                 FROM script
-                 WHERE ID LIKE '{}_'"""
-    request = request.format(state)
-    response = db_select(request)
+    single = True
+    while single:
+        request = """SELECT *
+                     FROM script
+                     WHERE ID='{}'""".format(state)
+        response = db_select(request)[0]
+        node = {'ID': response[0], 'option': response[1],
+                'type': response[2], 'points': response[3],
+                'links': response[4].split(' ')}
 
-    length = len(response)
-    if length == 0:
-        return False
-    if length == 1:
-        msg = response[0][0]
+        points += node.get('points')
+        msg = node.get('option')
         bot.send_message_text(chat_id, msg)
 
-        msg = 'Введите /script, чтобы начать заново'
-        key_text = '''{"keyboard":[[{"text":"/script"}]],
-                      "resize_keyboard":true}'''
-        bot.send_custom_keyboard(chat_id, msg, key_text)
-        return True
+        if node.get('type') != 'other':
+            if node.get('type') == 'bad':
+                points = 0
+                msg = 'Плохая концовка. Вы набрали {} очков. ' + \
+                      'Попробуйте заново /script'
+
+            if node.get('type') == 'good':
+                msg = 'Хорошая концовка. Вы набрали {} очков. ' + \
+                      'Попробуйте другие сценарии /script'
+            key_text = '''{"keyboard":[[{"text":"/script"}]],
+                          "resize_keyboard":true}'''
+            msg = msg.format(points)
+            bot.send_custom_keyboard(chat_id, msg, key_text)
+
+            customer.update({'points': points, 'state': ''})
+            return customer
+
+        request = """SELECT ID, option
+                     FROM script
+                     WHERE ID in ("""
+        for link in node.get('links'):
+            request = request + "'{}',".format(link)
+        request = request[:-1] + ')'
+        response = db_select(request)
+        length = len(response)
+        if length == 1:
+            state = response[0][0]
+            customer.update({'state': state})
+        else:
+            single = False
 
     key_text = button_constructor(length)
     msg = ''
+    counter = 1
     for option in response:
-        msg = msg + '{}. {}\n\n'.format(option[0][shift:], option[1])
+        msg = msg + '{}. {}\n\n'.format(counter, option[1])
+        counter = counter + 1
     bot.send_custom_keyboard(chat_id, msg, key_text)
-    return True
+
+    return customer
 
 
 def button_constructor(length):
@@ -238,9 +277,9 @@ def handle(bot, event):
             customer.update({'test_state': 0,
                              'test_points': 0})
             records_update(customer)
-            key_text = '''{"keyboard":[[{"text":"/test"}]],
+            key_text = '''{"keyboard":[[{"text":"/script"}]],
                           "resize_keyboard":true}'''
-            msg = 'Нажмите на кнопку, чтобы начать тест'
+            msg = 'Нажмите на кнопку /script, чтобы запустить сценарий'
             bot.send_custom_keyboard(chat_id, msg, key_text)
             return
 
@@ -303,22 +342,23 @@ def handle(bot, event):
 
         if len(divided_text) == 1 and \
            divided_text[0] == '/script':
-            msg = 'Выберите раздел. Для отмены отправьте /stop'
-            bot.send_message_text(chat_id, msg)
 
-            customer.update({'state': ''})
-            script_trigger(customer, chat_id, bot)
+            customer.update({'state': '0'})
+            customer = script_trigger(customer, chat_id, text, bot)
             records_update(customer)
             return
 
         if len(divided_text) == 1 and \
            divided_text[0] == '/stop' and \
-           customer.get('state') != '0':
+           customer.get('state') != '':
+
             msg = """Сценарий сброшен. Для того, чтобы
                      начать заново, отправьте /script"""
-            bot.send_message_text(chat_id, msg)
+            key_text = """{"keyboard":[[{"text":"/script"}]],
+                          "resize_keyboard":true}"""
+            bot.send_custom_keyboard(chat_id, msg, key_text)
 
-            customer.update({'state': '0'})
+            customer.update({'state': ''})
             records_update(customer)
             return
 
@@ -342,26 +382,9 @@ def handle(bot, event):
         records_update(customer)
         return
 
-# TODO CHECK
-    if customer.get('state') != '0':
-        state = customer.get('state')
-        if len(state) % 2 == 0
-        new_state = state + text
-        customer.update({'state': new_state})
-
-        if len(state) >= 2 and len(state) % 2 == 0:
-            new_state = new_state + '1'
-            customer.update({'state': new_state})
-            script_trigger(customer, chat_id, bot)
-            return
-
-        if script_trigger(customer, chat_id, bot):
-            records_update(customer)
-            return
-
-        msg = """Такого варианта нет. Попробуйте ввести другой
-                 ответ или начните заново, введя /script"""
-        bot.send_message_text(chat_id, msg)
+    if customer.get('state') != '':
+        customer = script_trigger(customer, chat_id, text, bot)
+        records_update(customer)
         return
 
     """Если ни одна из ветвей не сработала"""
