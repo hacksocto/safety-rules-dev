@@ -65,3 +65,14 @@ cursor.executemany('INSERT INTO script VALUES (?,?,?,?,?);', records)
 print('{} rows inserted'.format(cursor.rowcount))
 db.commit()
 db.close()
+
+records = [(0),
+           # раздел 1
+           (1),
+           # сценарий *название*
+           (11),
+           (111),
+           # вариант 1
+           (1111),
+           # вариант 2
+           (1112)]

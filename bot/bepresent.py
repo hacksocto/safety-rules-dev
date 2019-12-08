@@ -163,7 +163,9 @@ def test_check_answer(state, answer, chat_id, bot):
 def script_trigger(customer, chat_id, text, bot):
     state = customer.get('state')
     points = customer.get('points')
+    repeat = True
     if state != '0':
+        repeat = False
         request = """SELECT links
                     FROM script
                     WHERE ID='{}'""".format(state)
@@ -178,7 +180,6 @@ def script_trigger(customer, chat_id, text, bot):
         customer.update({'state': state})
 
     single = True
-    repeat = False
     while single:
         request = """SELECT *
                      FROM script
@@ -216,7 +217,7 @@ def script_trigger(customer, chat_id, text, bot):
                      WHERE ID in ("""
         for link in node.get('links'):
             request = request + "'{}',".format(link)
-        request = request[:-1] + ')'
+        request = request[:-1] + ') ORDER BY ID'
         response = db_select(request)
         length = len(response)
         if length == 1:
